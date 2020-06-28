@@ -334,9 +334,9 @@ Curl_fetch_addr(struct connectdata *conn,
   return dns;
 }
 
+#ifndef CURL_DISABLE_SHUFFLE_DNS
 UNITTEST CURLcode Curl_shuffle_addr(struct Curl_easy *data,
                                     Curl_addrinfo **addr);
-
 /*
  * Curl_shuffle_addr() shuffles the order of addresses in a 'Curl_addrinfo'
  * struct by re-linking its linked list.
@@ -401,6 +401,7 @@ UNITTEST CURLcode Curl_shuffle_addr(struct Curl_easy *data,
   }
   return result;
 }
+#endif
 
 /*
  * Curl_cache_addr() stores a 'Curl_addrinfo' struct in the DNS cache.
@@ -422,12 +423,14 @@ Curl_cache_addr(struct Curl_easy *data,
   struct Curl_dns_entry *dns;
   struct Curl_dns_entry *dns2;
 
+#ifndef CURL_DISABLE_SHUFFLE_DNS
   /* shuffle addresses if requested */
   if(data->set.dns_shuffle_addresses) {
     CURLcode result = Curl_shuffle_addr(data, &addr);
     if(result)
       return NULL;
   }
+#endif
 
   /* Create a new cache entry */
   dns = calloc(1, sizeof(struct Curl_dns_entry));
@@ -621,7 +624,7 @@ int Curl_resolv_timeout(struct connectdata *conn,
                         const char *hostname,
                         int port,
                         struct Curl_dns_entry **entry,
-                        time_t timeoutms)
+                        timediff_t timeoutms)
 {
 #ifdef USE_ALARM_TIMEOUT
 #ifdef HAVE_SIGACTION
@@ -746,7 +749,7 @@ clean_up:
                                             conn->created) / 1000;
 
     /* the alarm period is counted in even number of seconds */
-    unsigned long alarm_set = prev_alarm - elapsed_secs;
+    unsigned long alarm_set = (unsigned long)(prev_alarm - elapsed_secs);
 
     if(!alarm_set ||
        ((alarm_set >= 0x80000000) && (prev_alarm < 0x80000000)) ) {
@@ -1018,25 +1021,27 @@ CURLcode Curl_loadhostpairs(struct Curl_easy *data)
 CURLcode Curl_resolv_check(struct connectdata *conn,
                            struct Curl_dns_entry **dns)
 {
+#if defined(CURL_DISABLE_DOH) && !defined(CURLRES_ASYNCH)
+  (void)dns;
+#endif
+
   if(conn->data->set.doh)
     return Curl_doh_is_resolved(conn, dns);
   return Curl_resolver_is_resolved(conn, dns);
 }
 
 int Curl_resolv_getsock(struct connectdata *conn,
-                        curl_socket_t *socks,
-                        int numsocks)
+                        curl_socket_t *socks)
 {
 #ifdef CURLRES_ASYNCH
   if(conn->data->set.doh)
     /* nothing to wait for during DOH resolve, those handles have their own
        sockets */
     return GETSOCK_BLANK;
-  return Curl_resolver_getsock(conn, socks, numsocks);
+  return Curl_resolver_getsock(conn, socks);
 #else
   (void)conn;
   (void)socks;
-  (void)numsocks;
   return GETSOCK_BLANK;
 #endif
 }

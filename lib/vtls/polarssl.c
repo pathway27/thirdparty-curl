@@ -734,7 +734,7 @@ polarssl_connect_common(struct connectdata *conn,
   struct Curl_easy *data = conn->data;
   struct ssl_connect_data *connssl = &conn->ssl[sockindex];
   curl_socket_t sockfd = conn->sock[sockindex];
-  long timeout_ms;
+  timediff_t timeout_ms;
   int what;
 
   /* check if the connection has already been established */
@@ -781,7 +781,7 @@ polarssl_connect_common(struct connectdata *conn,
         connssl->connecting_state?sockfd:CURL_SOCKET_BAD;
 
       what = Curl_socket_check(readfd, CURL_SOCKET_BAD, writefd,
-                               nonblocking?0:timeout_ms);
+                               nonblocking?0:(time_t)timeout_ms);
       if(what < 0) {
         /* fatal error */
         failf(data, "select/poll on SSL socket, errno: %d", SOCKERRNO);
@@ -911,9 +911,7 @@ const struct Curl_ssl Curl_ssl_polarssl = {
   Curl_none_check_cxn,               /* check_cxn */
   Curl_none_shutdown,                /* shutdown */
   Curl_polarssl_data_pending,        /* data_pending */
-  /* This might cause libcurl to use a weeker random!
-   * TODO: use Polarssl's CTR-DRBG or HMAC-DRBG
-  */
+  /* This might cause libcurl to use a weeker random! */
   Curl_none_random,                  /* random */
   Curl_none_cert_status_request,     /* cert_status_request */
   Curl_polarssl_connect,             /* connect */

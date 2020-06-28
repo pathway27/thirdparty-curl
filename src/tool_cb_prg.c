@@ -32,6 +32,7 @@
 #include "tool_cfgable.h"
 #include "tool_cb_prg.h"
 #include "tool_util.h"
+#include "tool_operate.h"
 
 #include "memdebug.h" /* keep this as LAST include */
 
@@ -121,18 +122,26 @@ int tool_progress_cb(void *clientp,
      and this new edition inherits some of his concepts. */
 
   struct timeval now = tvnow();
-  struct ProgressData *bar = (struct ProgressData *)clientp;
+  struct per_transfer *per = clientp;
+  struct OutStruct *outs = &per->outs;
+  struct OperationConfig *config = outs->config;
+  struct ProgressData *bar = &per->progressbar;
   curl_off_t total;
   curl_off_t point;
 
-  /* expected transfer size */
-  if((CURL_OFF_T_MAX - bar->initial_size) < (dltotal + ultotal))
+  /* Calculate expected transfer size. initial_size can be less than zero
+     when indicating that we are expecting to get the filesize from the
+     remote */
+  if(bar->initial_size < 0 ||
+     ((CURL_OFF_T_MAX - bar->initial_size) < (dltotal + ultotal)))
     total = CURL_OFF_T_MAX;
   else
     total = dltotal + ultotal + bar->initial_size;
 
-  /* we've come this far */
-  if((CURL_OFF_T_MAX - bar->initial_size) < (dlnow + ulnow))
+  /* Calculate the current progress. initial_size can be less than zero when
+     indicating that we are expecting to get the filesize from the remote */
+  if(bar->initial_size < 0 ||
+     ((CURL_OFF_T_MAX - bar->initial_size) < (dlnow + ulnow)))
     point = CURL_OFF_T_MAX;
   else
     point = dlnow + ulnow + bar->initial_size;
@@ -186,6 +195,11 @@ int tool_progress_cb(void *clientp,
   bar->prev = point;
   bar->prevtime = now;
 
+  if(config->readbusy) {
+    config->readbusy = FALSE;
+    curl_easy_pause(per->curl, CURLPAUSE_CONT);
+  }
+
   return 0;
 }
 
@@ -205,7 +219,8 @@ void progressbarinit(struct ProgressData *bar,
   if(colp) {
     char *endptr;
     long num = strtol(colp, &endptr, 10);
-    if((endptr != colp) && (endptr == colp + strlen(colp)) && (num > 20))
+    if((endptr != colp) && (endptr == colp + strlen(colp)) && (num > 20) &&
+       (num < 10000))
       bar->width = (int)num;
     curl_free(colp);
   }

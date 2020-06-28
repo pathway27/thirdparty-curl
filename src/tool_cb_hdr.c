@@ -5,7 +5,7 @@
  *                            | (__| |_| |  _ <| |___
  *                             \___|\___/|_| \_\_____|
  *
- * Copyright (C) 1998 - 2018, Daniel Stenberg, <daniel@haxx.se>, et al.
+ * Copyright (C) 1998 - 2019, Daniel Stenberg, <daniel@haxx.se>, et al.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution. The terms
@@ -32,6 +32,7 @@
 #include "tool_msgs.h"
 #include "tool_cb_hdr.h"
 #include "tool_cb_wrt.h"
+#include "tool_operate.h"
 
 #include "memdebug.h" /* keep this as LAST include */
 
@@ -54,9 +55,11 @@ static char *parse_filename(const char *ptr, size_t len);
 
 size_t tool_header_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
-  struct HdrCbData *hdrcbdata = userdata;
-  struct OutStruct *outs = hdrcbdata->outs;
-  struct OutStruct *heads = hdrcbdata->heads;
+  struct per_transfer *per = userdata;
+  struct HdrCbData *hdrcbdata = &per->hdrcbdata;
+  struct OutStruct *outs = &per->outs;
+  struct OutStruct *heads = &per->heads;
+  struct OutStruct *etag_save = &per->etag_save;
   const char *str = ptr;
   const size_t cb = size * nmemb;
   const char *end = (char *)ptr + cb;
@@ -94,13 +97,66 @@ size_t tool_header_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
   }
 
   /*
+   * Write etag to file when --etag-save option is given.
+   * etag string that we want is enveloped in double quotes
+   */
+  if(etag_save->config->etag_save_file && etag_save->stream) {
+    /* match only header that start with etag (case insensitive) */
+    if(curl_strnequal(str, "etag:", 5)) {
+      char *etag_h = NULL;
+      char *first = NULL;
+      char *last = NULL;
+      size_t etag_length = 0;
+
+      etag_h = ptr;
+      /* point to first occurence of double quote */
+      first = memchr(etag_h, '\"', cb);
+
+      /*
+       * if server side messed with the etag header and doesn't include
+       * double quotes around the etag, kindly exit with a warning
+       */
+
+      if(!first) {
+        warnf(
+          etag_save->config->global,
+          "\nReceived header etag is missing double quote/s\n");
+        return 1;
+      }
+      else {
+        /* discard first double quote */
+        first++;
+      }
+
+      /* point to last occurence of double quote */
+      last = memchr(first, '\"', cb);
+
+      if(!last) {
+        warnf(
+          etag_save->config->global,
+          "\nReceived header etag is missing double quote/s\n");
+        return 1;
+      }
+
+      /* get length of desired etag */
+      etag_length = (size_t)last - (size_t)first;
+
+      fwrite(first, size, etag_length, etag_save->stream);
+      /* terminate with new line */
+      fputc('\n', etag_save->stream);
+    }
+
+    (void)fflush(etag_save->stream);
+  }
+
+  /*
    * This callback sets the filename where output shall be written when
    * curl options --remote-name (-O) and --remote-header-name (-J) have
    * been simultaneously given and additionally server returns an HTTP
    * Content-Disposition header specifying a filename property.
    */
 
-  curl_easy_getinfo(outs->config->easy, CURLINFO_PROTOCOL, &protocol);
+  curl_easy_getinfo(per->curl, CURLINFO_PROTOCOL, &protocol);
   if(hdrcbdata->honor_cd_filename &&
      (cb > 20) && checkprefix("Content-disposition:", str) &&
      (protocol & (CURLPROTO_HTTPS|CURLPROTO_HTTP))) {

@@ -367,6 +367,8 @@ static int parse_servercmd(struct httprequest *req)
 
   filename = test2file(req->testno);
   req->close = FALSE;
+  req->connmon = FALSE;
+
   stream = fopen(filename, "rb");
   if(!stream) {
     error = errno;
@@ -390,8 +392,6 @@ static int parse_servercmd(struct httprequest *req)
       req->open = FALSE; /* closes connection */
       return 1; /* done */
     }
-
-    req->connmon = FALSE;
 
     cmd = orgcmd;
     while(cmd && cmdsize) {
@@ -540,12 +540,11 @@ static int ProcessRequest(struct httprequest *req)
         msnprintf(logbuf, sizeof(logbuf), "Requested test number %ld part %ld",
                   req->testno, req->partno);
         logmsg("%s", logbuf);
-
-        /* find and parse <servercmd> for this test */
-        parse_servercmd(req);
       }
-      else
+      else {
+        logmsg("No test number");
         req->testno = DOCNUMBER_NOTHING;
+      }
 
     }
 
@@ -606,14 +605,6 @@ static int ProcessRequest(struct httprequest *req)
     }
 
     if(req->testno == DOCNUMBER_NOTHING) {
-      /* check for a Testno: header with the test case number */
-      char *testno = strstr(line, "\nTestno: ");
-      if(testno) {
-        req->testno = strtol(&testno[9], NULL, 10);
-        logmsg("Found test number %d in Testno: header!", req->testno);
-      }
-    }
-    if(req->testno == DOCNUMBER_NOTHING) {
       /* Still no test case number. Try to get the the number off the last dot
          instead, IE we consider the TLD to be the test number. Test 123 can
          then be written as "example.com.123". */
@@ -653,8 +644,8 @@ static int ProcessRequest(struct httprequest *req)
     }
   }
   else if((req->offset >= 3) && (req->testno == DOCNUMBER_NOTHING)) {
-    logmsg("** Unusual request. Starts with %02x %02x %02x",
-           line[0], line[1], line[2]);
+    logmsg("** Unusual request. Starts with %02x %02x %02x (%c%c%c)",
+           line[0], line[1], line[2], line[0], line[1], line[2]);
   }
 
   if(!end) {
@@ -662,7 +653,22 @@ static int ProcessRequest(struct httprequest *req)
     logmsg("request not complete yet");
     return 0; /* not complete yet */
   }
-  logmsg("- request found to be complete");
+  logmsg("- request found to be complete (%d)", req->testno);
+
+  if(req->testno == DOCNUMBER_NOTHING) {
+    /* check for a Testno: header with the test case number */
+    char *testno = strstr(line, "\nTestno: ");
+    if(testno) {
+      req->testno = strtol(&testno[9], NULL, 10);
+      logmsg("Found test number %d in Testno: header!", req->testno);
+    }
+    else {
+      logmsg("No Testno: header");
+    }
+  }
+
+  /* find and parse <servercmd> for this test */
+  parse_servercmd(req);
 
   if(use_gopher) {
     /* when using gopher we cannot check the request until the entire
@@ -952,28 +958,19 @@ static int get_request(curl_socket_t sock, struct httprequest *req)
   ssize_t got = 0;
   int overflow = 0;
 
-  char *pipereq = NULL;
-  size_t pipereq_length = 0;
-
   if(req->offset >= REQBUFSIZ-1) {
     /* buffer is already full; do nothing */
     overflow = 1;
   }
   else {
-    if(pipereq_length && pipereq) {
-      memmove(reqbuf, pipereq, pipereq_length);
-      got = curlx_uztosz(pipereq_length);
-      pipereq_length = 0;
-    }
-    else {
-      if(req->skip)
-        /* we are instructed to not read the entire thing, so we make sure to
-           only read what we're supposed to and NOT read the enire thing the
-           client wants to send! */
-        got = sread(sock, reqbuf + req->offset, req->cl);
-      else
-        got = sread(sock, reqbuf + req->offset, REQBUFSIZ-1 - req->offset);
-    }
+    if(req->skip)
+      /* we are instructed to not read the entire thing, so we make sure to
+         only read what we're supposed to and NOT read the enire thing the
+         client wants to send! */
+      got = sread(sock, reqbuf + req->offset, req->cl);
+    else
+      got = sread(sock, reqbuf + req->offset, REQBUFSIZ-1 - req->offset);
+
     if(got_exit_signal)
       return -1;
     if(got == 0) {
